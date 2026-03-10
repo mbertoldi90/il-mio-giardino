@@ -1,0 +1,78 @@
+import streamlit as st
+import google.generativeai as genai
+from PIL import Image
+import sqlite3
+from datetime import datetime
+
+# --- CONFIGURAZIONE DATABASE ---
+def init_db():
+    conn = sqlite3.connect('garden.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS garden 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  name TEXT, info TEXT, date TEXT)''')
+    conn.commit()
+    conn.close()
+
+def save_to_db(name, info):
+    conn = sqlite3.connect('garden.db')
+    c = conn.cursor()
+    date_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    c.execute("INSERT INTO garden (name, info, date) VALUES (?, ?, ?)", (name, info, date_str))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- CONFIGURAZIONE AI ---
+genai.configure(api_key="LA_TUA_API_KEY")
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+st.set_page_config(page_title="My Digital Garden", page_icon="🌿", layout="wide")
+
+st.title("🌿 Il Mio Giardino Digitale")
+
+# Sidebar per lo storico
+st.sidebar.header("📜 Ultime Scoperte")
+conn = sqlite3.connect('garden.db')
+history = conn.execute("SELECT name, date FROM garden ORDER BY id DESC LIMIT 10").fetchall()
+for h_name, h_date in history:
+    st.sidebar.write(f"**{h_name}** - *{h_date}*")
+conn.close()
+
+# UI Principale
+col1, col2 = st.columns(2)
+with col1:
+    plant_input = st.text_input("Nome pianta:")
+with col2:
+    uploaded_file = st.file_uploader("Carica foto:", type=['jpg', 'jpeg', 'png'])
+
+def get_plant_info(query, image=None):
+    prompt = """Identifica la pianta. Fornisci:
+    1. Nome Comune e Scientifico (come titolo)
+    2. Breve descrizione
+    3. 3 consigli di cura (Luce, Acqua, Terreno).
+    Sii conciso e usa il formato Markdown. Rispondi in italiano."""
+    
+    if image:
+        response = model.generate_content([prompt, image])
+    else:
+        response = model.generate_content(f"{prompt} La pianta è: {query}")
+    return response.text
+
+if st.button("Analizza e Identifica"):
+    with st.spinner('Interrogando la natura...'):
+        img_obj = Image.open(uploaded_file) if uploaded_file else None
+        res_text = get_plant_info(plant_input, img_obj)
+        
+        if img_obj: st.image(img_obj, width=300)
+        st.markdown(res_text)
+        
+        # Estraiamo un nome per il database (la prima riga della risposta)
+        first_line = res_text.split('\n')[0].replace('#', '').strip()
+        
+        # Bottone per salvare
+        if st.button("Aggiungi al mio Giardino"):
+            save_to_db(first_line, res_text)
+            st.success(f"'{first_line}' salvata correttamente!")
+            st.rerun()
